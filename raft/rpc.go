@@ -11,15 +11,24 @@ func (rn *RaftNode) RequestVote(req *RequestVoteRequest, resp *RequestVoteRespon
 	log.Printf("[%s] Received RequestVote from %s (term %d, lastLog: %d/%d)",
 		rn.id, req.CandidateID, req.Term, req.LastLogTerm, req.LastLogIndex)
 	
-	// Initialize response with current term
+	// Initialize response
 	resp.Term = rn.currentTerm
 	resp.VoteGranted = false
 	
-	// TODO: Implement voting logic (election.go)
-	// For now, just update term if candidate has higher term
+	// If candidate has higher term, update ours
 	if req.Term > rn.currentTerm {
 		rn.becomeFollower(req.Term)
 		resp.Term = rn.currentTerm
+	}
+	
+	// Use the voting logic from election.go
+	if rn.shouldVoteFor(req) {
+		rn.votedFor = req.CandidateID
+		resp.VoteGranted = true
+		rn.resetElectionTimer() // Reset timer when granting vote
+		log.Printf("[%s] ✓ Granted vote to %s in term %d", rn.id, req.CandidateID, rn.currentTerm)
+	} else {
+		log.Printf("[%s] ✗ Rejected vote for %s in term %d", rn.id, req.CandidateID, rn.currentTerm)
 	}
 	
 	return nil
