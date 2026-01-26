@@ -110,6 +110,7 @@ func (rn *RaftNode) becomeLeader() {
 		rn.matchIndex[peer] = 0
 	}
 	
+	// Send initial heartbeats with replication
 	rn.sendHeartbeats()
 	rn.resetHeartbeatTimer()
 }
@@ -168,7 +169,14 @@ func (rn *RaftNode) GetState() (term int, isLeader bool) {
 	return rn.currentTerm, rn.state == Leader
 }
 
-// sendHeartbeats sends empty AppendEntries to all peers
+// sendHeartbeats sends AppendEntries to all peers (with YOUR replication logic!)
 func (rn *RaftNode) sendHeartbeats() {
-	log.Printf("[%s] Sending heartbeats (term %d)", rn.id, rn.currentTerm)
+	if rn.state != Leader {
+		return
+	}
+	
+	log.Printf("[%s] Sending heartbeats/replication (term %d)", rn.id, rn.currentTerm)
+	
+	// Use the replication logic YOU implemented!
+	rn.replicateLog()
 }
