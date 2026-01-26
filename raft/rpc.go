@@ -54,8 +54,7 @@ func (rn *RaftNode) AppendEntries(req *AppendEntriesRequest, resp *AppendEntries
 		return nil
 	}
 	
-	// If RPC request or response contains term > currentTerm:
-	// set currentTerm = T, convert to follower
+	// If leader's term is higher, update ours
 	if req.Term > rn.currentTerm {
 		rn.becomeFollower(req.Term)
 		resp.Term = rn.currentTerm
@@ -64,12 +63,28 @@ func (rn *RaftNode) AppendEntries(req *AppendEntriesRequest, resp *AppendEntries
 	// Valid leader for current term - reset election timer
 	rn.resetElectionTimer()
 	
-	// Ensure we're a follower (could be candidate with same term)
+	// Ensure we're a follower
 	if rn.state != Follower {
 		rn.becomeFollower(req.Term)
 	}
 	
-	// TODO: Implement log consistency check and replication (replication.go)
+	// Check log consistency using YOUR implementation!
+	if !rn.checkLogConsistency(req) {
+		log.Printf("[%s] ✗ Log inconsistency at index %d", rn.id, req.PrevLogIndex)
+		resp.Success = false
+		return nil
+	}
 	
+	// Append new entries using YOUR implementation!
+	if len(req.Entries) > 0 {
+		rn.appendNewEntries(req)
+	}
+	
+	// Update commit index using YOUR implementation!
+	rn.updateCommitIndex(req)
+	
+	// Success!
+	resp.Success = true
+	log.Printf("[%s] ✓ AppendEntries succeeded", rn.id)
 	return nil
 }
