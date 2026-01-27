@@ -37,6 +37,14 @@ func NewRaftNode(id string, peers []string, applyCh chan ApplyMsg) *RaftNode {
 	return rn
 }
 
+// SetTransport attaches the transport layer to this node
+func (rn *RaftNode) SetTransport(transport *Transport) {
+	rn.mu.Lock()
+	defer rn.mu.Unlock()
+	rn.transport = transport
+	log.Printf("[%s] Transport layer attached", rn.id)
+}
+
 // Start begins the Raft node's operation
 func (rn *RaftNode) Start() {
 	rn.mu.Lock()
