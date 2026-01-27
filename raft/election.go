@@ -42,14 +42,18 @@ func (rn *RaftNode) startElection() {
 		LastLogTerm:  rn.lastLogTerm(),
 	}
 	
-	// Send RequestVote to all peers in parallel
+	// Send RequestVote to all peers in parallel using REAL NETWORK!
 	for _, peer := range rn.peers {
 		go func(peerID string) {
-			resp := &RequestVoteResponse{}
+			// Use real HTTP transport!
+			resp, err := rn.transport.SendRequestVote(peerID, req)
+			if err != nil {
+				log.Printf("[%s] ✗ RequestVote to %s failed: %v", rn.id, peerID, err)
+				return
+			}
 			
-			// TODO: Send RPC to peer (we'll add RPC client later)
-			// For now, simulate the call
-			log.Printf("[%s] → RequestVote to %s (term %d)", rn.id, peerID, req.Term)
+			log.Printf("[%s] ✓ RequestVote response from %s: granted=%v, term=%d",
+				rn.id, peerID, resp.VoteGranted, resp.Term)
 			
 			// Handle response
 			rn.mu.Lock()
@@ -84,7 +88,7 @@ func (rn *RaftNode) handleVoteResponse(resp *RequestVoteResponse) {
 		
 		// Check if won election
 		if rn.votesReceived >= rn.majority {
-			log.Printf("[%s] WON ELECTION with %d votes!", rn.id, rn.votesReceived)
+			log.Printf("[%s] 🎉 WON ELECTION with %d votes!", rn.id, rn.votesReceived)
 			rn.becomeLeader()
 		}
 	}
