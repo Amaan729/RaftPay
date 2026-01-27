@@ -95,13 +95,17 @@ func (rn *RaftNode) sendAppendEntriesToPeer(peerID string) {
 		LeaderCommit: rn.commitIndex,
 	}
 	
-	// Send RPC in background
+	// Send RPC using REAL NETWORK!
 	go func() {
-		resp := &AppendEntriesResponse{}
+		// Use real HTTP transport!
+		resp, err := rn.transport.SendAppendEntries(peerID, req)
+		if err != nil {
+			log.Printf("[%s] ✗ AppendEntries to %s failed: %v", rn.id, peerID, err)
+			return
+		}
 		
-		// TODO: Send actual RPC (network layer coming soon)
-		log.Printf("[%s] → AppendEntries to %s (prevLog: %d/%d, entries: %d, commit: %d)",
-			rn.id, peerID, prevLogIndex, prevLogTerm, len(entries), rn.commitIndex)
+		log.Printf("[%s] ✓ AppendEntries response from %s: success=%v, term=%d",
+			rn.id, peerID, resp.Success, resp.Term)
 		
 		// Handle response
 		rn.mu.Lock()
@@ -181,7 +185,7 @@ func (rn *RaftNode) advanceCommitIndex() {
 			
 			rn.commitIndex = n
 			
-			// TODO: Apply committed entries to state machine
+			// TODO: Apply committed entries to state machine (next batch!)
 			
 			break // Found the highest committable index
 		}
