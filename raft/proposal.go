@@ -26,6 +26,11 @@ func (rn *RaftNode) Propose(command Command) (int, int, bool) {
 	}
 	rn.log = append(rn.log, entry)
 	
+	// Persist the new log entry to disk
+	if err := rn.persister.AppendLogEntry(entry); err != nil {
+		log.Printf("[%s] ❌ Failed to persist log entry at index %d: %v", rn.id, newIndex, err)
+	}
+	
 	log.Printf("[%s] 📝 Proposed new entry at index %d (term %d)",
 		rn.id, newIndex, rn.currentTerm)
 	
