@@ -2,7 +2,6 @@ package ledger
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	
 	"github.com/Amaan729/RaftPay/raft"
