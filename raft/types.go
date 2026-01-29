@@ -103,6 +103,9 @@ type RaftNode struct {
 	
 	// --- Transport Layer ---
 	transport *Transport // Handles network communication
+	
+	// --- Persistence Layer ---
+	persister *Persister // Handles saving/loading state to/from disk
 }
 
 // ApplyMsg is sent when a log entry is committed and ready to apply
