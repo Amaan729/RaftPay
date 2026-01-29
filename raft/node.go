@@ -177,6 +177,20 @@ func (rn *RaftNode) GetState() (term int, isLeader bool) {
 	return rn.currentTerm, rn.state == Leader
 }
 
+// GetStats returns statistics for API /status endpoint
+func (rn *RaftNode) GetStats() (commitIndex int, lastApplied int, logLength int) {
+	rn.mu.Lock()
+	defer rn.mu.Unlock()
+	return rn.commitIndex, rn.lastApplied, len(rn.log)
+}
+
+// GetPeers returns the list of peer nodes
+func (rn *RaftNode) GetPeers() []string {
+	rn.mu.Lock()
+	defer rn.mu.Unlock()
+	return rn.peers
+}
+
 // sendHeartbeats sends AppendEntries to all peers (with YOUR replication logic!)
 func (rn *RaftNode) sendHeartbeats() {
 	if rn.state != Leader {
