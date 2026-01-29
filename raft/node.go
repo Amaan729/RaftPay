@@ -27,9 +27,28 @@ func NewRaftNode(id string, peers []string, applyCh chan ApplyMsg) *RaftNode {
 		applyCh:       applyCh,
 		stopCh:        make(chan struct{}),
 		config:        DefaultConfig(),
+		persister:     NewPersister(id), // Initialize persister
 	}
 	
-	rn.log = append(rn.log, LogEntry{Term: 0, Index: 0, Command: nil})
+	// Try to load persistent state from disk
+	term, votedFor, exists, err := rn.persister.LoadState()
+	if err != nil {
+		log.Printf("[%s] ⚠ Failed to load state: %v (starting fresh)", id, err)
+	} else if exists {
+		rn.currentTerm = term
+		rn.votedFor = votedFor
+		log.Printf("[%s] 💾 Loaded state from disk: term=%d, votedFor=%s", id, term, votedFor)
+	}
+	
+	// Try to load log from disk
+	loadedLog, err := rn.persister.LoadLog()
+	if err != nil {
+		log.Printf("[%s] ⚠ Failed to load log: %v (starting with empty log)", id, err)
+		rn.log = []LogEntry{{Term: 0, Index: 0, Command: nil}}
+	} else {
+		rn.log = loadedLog
+		log.Printf("[%s] 💾 Loaded %d log entries from disk", id, len(loadedLog)-1)
+	}
 	
 	log.Printf("[%s] Initialized Raft node | Peers: %v | Majority: %d/%d",
 		id, peers, majority, totalNodes)
@@ -71,6 +90,13 @@ func (rn *RaftNode) Stop() {
 	}
 }
 
+// persist saves currentTerm and votedFor to disk
+func (rn *RaftNode) persist() {
+	if err := rn.persister.SaveState(rn.currentTerm, rn.votedFor); err != nil {
+		log.Printf("[%s] ❌ Failed to persist state: %v", rn.id, err)
+	}
+}
+
 // becomeFollower transitions node to follower state
 func (rn *RaftNode) becomeFollower(term int) {
 	log.Printf("[%s] Becoming FOLLOWER in term %d", rn.id, term)
@@ -79,6 +105,9 @@ func (rn *RaftNode) becomeFollower(term int) {
 	rn.currentTerm = term
 	rn.votedFor = ""
 	rn.votesReceived = 0
+	
+	// Persist state change
+	rn.persist()
 	
 	if rn.heartbeatTimer != nil {
 		rn.heartbeatTimer.Stop()
@@ -95,6 +124,9 @@ func (rn *RaftNode) becomeCandidate() {
 	rn.currentTerm++
 	rn.votedFor = rn.id
 	rn.votesReceived = 1
+	
+	// Persist state change
+	rn.persist()
 	
 	rn.resetElectionTimer()
 	
