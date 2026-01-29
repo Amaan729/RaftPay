@@ -62,7 +62,8 @@ func (rn *RaftNode) updateCommitIndex(req *AppendEntriesRequest) {
 		
 		rn.commitIndex = newCommitIndex
 		
-		// TODO: Apply committed entries to state machine (next batch!)
+		// Apply committed entries to state machine!
+		rn.applyCommittedEntries()
 	}
 }
 
@@ -185,7 +186,8 @@ func (rn *RaftNode) advanceCommitIndex() {
 			
 			rn.commitIndex = n
 			
-			// TODO: Apply committed entries to state machine (next batch!)
+			// Apply committed entries to state machine!
+			rn.applyCommittedEntries()
 			
 			break // Found the highest committable index
 		}
