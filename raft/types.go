@@ -3,6 +3,7 @@
 package raft
 
 import (
+	"encoding/json"
 	"sync"
 	"time"
 )
@@ -31,9 +32,36 @@ func (s NodeState) String() string {
 
 // LogEntry represents a single command in the replicated log
 type LogEntry struct {
-	Term    int         // Term when entry was created by leader
-	Index   int         // Position in log (1-indexed)
-	Command interface{} // The actual command (e.g., financial transaction)
+	Term    int         `json:"term"`    // Term when entry was created by leader
+	Index   int         `json:"index"`   // Position in log (1-indexed)
+	Command interface{} `json:"command"` // The actual command (e.g., financial transaction)
+}
+
+// UnmarshalJSON custom unmarshaler for LogEntry to handle Command properly
+func (le *LogEntry) UnmarshalJSON(data []byte) error {
+	// Define a temporary struct to extract fields
+	type Alias LogEntry
+	aux := &struct {
+		CommandRaw json.RawMessage `json:"command"`
+		*Alias
+	}{
+		Alias: (*Alias)(le),
+	}
+	
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	
+	// Try to unmarshal Command as our Command struct
+	var cmd Command
+	if err := json.Unmarshal(aux.CommandRaw, &cmd); err == nil {
+		le.Command = cmd
+	} else {
+		// Fallback: keep as raw JSON for backwards compatibility
+		le.Command = aux.CommandRaw
+	}
+	
+	return nil
 }
 
 // RaftNode is the core Raft consensus module
