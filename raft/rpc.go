@@ -25,6 +25,10 @@ func (rn *RaftNode) RequestVote(req *RequestVoteRequest, resp *RequestVoteRespon
 	if rn.shouldVoteFor(req) {
 		rn.votedFor = req.CandidateID
 		resp.VoteGranted = true
+		
+		// Persist votedFor to disk BEFORE granting vote
+		rn.persist()
+		
 		rn.resetElectionTimer() // Reset timer when granting vote
 		log.Printf("[%s] ✓ Granted vote to %s in term %d", rn.id, req.CandidateID, rn.currentTerm)
 	} else {
