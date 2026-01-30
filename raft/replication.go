@@ -25,8 +25,8 @@ func (rn *RaftNode) appendNewEntries(req *AppendEntriesRequest) {
 	// Start inserting at PrevLogIndex + 1
 	insertIndex := req.PrevLogIndex + 1
 	
-	// Track if we modified the log (for persistence)
-	modified := false
+	// Track if we had a CONFLICT (not just appending)
+	hadConflict := false
 	
 	for i, entry := range req.Entries {
 		currentIndex := insertIndex + i
@@ -43,30 +43,29 @@ func (rn *RaftNode) appendNewEntries(req *AppendEntriesRequest) {
 			log.Printf("[%s] Conflict at index %d: our term %d vs leader's term %d - truncating",
 				rn.id, currentIndex, rn.log[currentIndex].Term, entry.Term)
 			rn.log = rn.log[:currentIndex]
-			modified = true
+			hadConflict = true
 		}
 		
 		// Append this entry (and set its index)
 		entry.Index = currentIndex
 		rn.log = append(rn.log, entry)
 		
-		// Persist the new entry to disk
-		if err := rn.persister.AppendLogEntry(entry); err != nil {
-			log.Printf("[%s] ❌ Failed to persist log entry at index %d: %v", rn.id, currentIndex, err)
+		// Only persist if NOT in conflict mode (we'll rewrite entire log after conflict)
+		if !hadConflict {
+			if err := rn.persister.AppendLogEntry(entry); err != nil {
+				log.Printf("[%s] ❌ Failed to persist log entry at index %d: %v", rn.id, currentIndex, err)
+			}
 		}
 		
 		log.Printf("[%s] Appended entry at index %d (term %d)",
 			rn.id, currentIndex, entry.Term)
-		modified = true
 	}
 	
-	// If we truncated the log due to conflict, rewrite the log file
-	if modified && len(req.Entries) > 0 {
-		// Check if we need to truncate the persisted log
-		if insertIndex < len(rn.log) {
-			if err := rn.persister.TruncateLog(rn.log); err != nil {
-				log.Printf("[%s] ❌ Failed to truncate log file: %v", rn.id, err)
-			}
+	// ONLY truncate persisted log if we had an actual conflict
+	if hadConflict {
+		log.Printf("[%s] 💾 Rewriting log file due to conflict (new length: %d)", rn.id, len(rn.log))
+		if err := rn.persister.TruncateLog(rn.log); err != nil {
+			log.Printf("[%s] ❌ Failed to truncate log file: %v", rn.id, err)
 		}
 	}
 }
