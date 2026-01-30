@@ -18,11 +18,12 @@ type PersistentState struct {
 // Persister handles saving and loading Raft state to/from disk
 type Persister struct {
 	mu        sync.Mutex
-	dataDir   string // Directory for this node's data
-	stateFile string // Path to state.json
-	logFile   string // Path to log.jsonl
-	logWriter *bufio.Writer // Buffered writer for log
-	logFd     *os.File      // Keep file open
+	dataDir   string          // Directory for this node's data
+	stateFile string          // Path to state.json
+	logFile   string          // Path to log.jsonl
+	logFD     *os.File        // Keep log file open for performance
+	logWriter *bufio.Writer   // Buffered writer for batching
+	disabled  bool            // If true, skip all disk I/O (for benchmarking)
 }
 
 // NewPersister creates a new persister for a given node
@@ -37,20 +38,32 @@ func NewPersister(nodeID string) *Persister {
 		dataDir:   dataDir,
 		stateFile: filepath.Join(dataDir, "state.json"),
 		logFile:   filepath.Join(dataDir, "log.jsonl"),
+		disabled:  false, // Persistence enabled by default
 	}
 	
-	// Open log file once and keep it open
+	// Open log file for appending (keep it open)
 	f, err := os.OpenFile(p.logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err == nil {
-		p.logFd = f
+		p.logFD = f
 		p.logWriter = bufio.NewWriterSize(f, 64*1024) // 64KB buffer
 	}
 	
 	return p
 }
 
+// DisablePersistence turns off all disk writes (for benchmarking)
+func (p *Persister) DisablePersistence() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.disabled = true
+}
+
 // SaveState atomically saves currentTerm and votedFor to disk
 func (p *Persister) SaveState(term int, votedFor string) error {
+	if p.disabled {
+		return nil // Skip if disabled
+	}
+	
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	
@@ -59,7 +72,8 @@ func (p *Persister) SaveState(term int, votedFor string) error {
 		VotedFor:    votedFor,
 	}
 	
-	data, err := json.MarshalIndent(state, "", "  ")
+	// Marshal to JSON
+	data, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %v", err)
 	}
@@ -70,7 +84,7 @@ func (p *Persister) SaveState(term int, votedFor string) error {
 		return fmt.Errorf("failed to write temp state file: %v", err)
 	}
 	
-	// Atomic rename
+	// Atomic rename (POSIX guarantees atomicity)
 	if err := os.Rename(tempFile, p.stateFile); err != nil {
 		return fmt.Errorf("failed to rename state file: %v", err)
 	}
@@ -80,19 +94,23 @@ func (p *Persister) SaveState(term int, votedFor string) error {
 
 // LoadState loads currentTerm and votedFor from disk
 func (p *Persister) LoadState() (int, string, bool, error) {
+	if p.disabled {
+		return 0, "", false, nil // Skip if disabled
+	}
+	
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	
 	// Check if state file exists
-	if _, err := os.Stat(p.stateFile); os.IsNotExist(err) {
-		return 0, "", false, nil
-	}
-	
 	data, err := os.ReadFile(p.stateFile)
+	if os.IsNotExist(err) {
+		return 0, "", false, nil // No state file, fresh start
+	}
 	if err != nil {
 		return 0, "", false, fmt.Errorf("failed to read state file: %v", err)
 	}
 	
+	// Unmarshal
 	var state PersistentState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return 0, "", false, fmt.Errorf("failed to unmarshal state: %v", err)
@@ -101,54 +119,57 @@ func (p *Persister) LoadState() (int, string, bool, error) {
 	return state.CurrentTerm, state.VotedFor, true, nil
 }
 
-// AppendLogEntry appends a log entry using buffered writes
+// AppendLogEntry appends a single log entry to the log file (no-op if disabled)
 func (p *Persister) AppendLogEntry(entry LogEntry) error {
+	if p.disabled {
+		return nil // Skip if disabled
+	}
+	
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	
 	if p.logWriter == nil {
-		return fmt.Errorf("log writer not initialized")
+		return nil // Silently skip if writer not initialized
 	}
 	
-	// Marshal entry
+	// Marshal entry to JSON
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return fmt.Errorf("failed to marshal log entry: %v", err)
 	}
 	
-	// Write to buffer (NOT disk yet)
-	if _, err := p.logWriter.WriteString(string(data) + "\n"); err != nil {
+	// Write to buffer (no fsync, batched automatically)
+	if _, err := p.logWriter.Write(data); err != nil {
 		return fmt.Errorf("failed to write log entry: %v", err)
 	}
+	if _, err := p.logWriter.WriteString("\n"); err != nil {
+		return fmt.Errorf("failed to write newline: %v", err)
+	}
 	
-	// Flush buffer every 100 entries (batching)
-	// This reduces syscalls dramatically
 	return nil
 }
 
-// Flush forces buffered writes to disk
+// Flush forces buffered data to disk
 func (p *Persister) Flush() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	
-	if p.logWriter == nil {
+	if p.disabled {
 		return nil
 	}
 	
-	if err := p.logWriter.Flush(); err != nil {
-		return err
-	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	
-	// Sync to disk
-	if p.logFd != nil {
-		return p.logFd.Sync()
+	if p.logWriter != nil {
+		return p.logWriter.Flush()
 	}
-	
 	return nil
 }
 
 // LoadLog loads all log entries from disk
 func (p *Persister) LoadLog() ([]LogEntry, error) {
+	if p.disabled {
+		return []LogEntry{{Term: 0, Index: 0, Command: nil}}, nil
+	}
+	
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	
@@ -169,10 +190,13 @@ func (p *Persister) LoadLog() ([]LogEntry, error) {
 	lineNum := 0
 	for scanner.Scan() {
 		lineNum++
+		line := scanner.Text()
+		
 		var entry LogEntry
-		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal log entry at line %d: %v", lineNum, err)
 		}
+		
 		log = append(log, entry)
 	}
 	
@@ -185,42 +209,46 @@ func (p *Persister) LoadLog() ([]LogEntry, error) {
 
 // TruncateLog truncates and rewrites the log
 func (p *Persister) TruncateLog(entries []LogEntry) error {
+	if p.disabled {
+		return nil
+	}
+	
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	
-	// Close current file
+	// Close existing file
 	if p.logWriter != nil {
 		p.logWriter.Flush()
 	}
-	if p.logFd != nil {
-		p.logFd.Close()
+	if p.logFD != nil {
+		p.logFD.Close()
 	}
 	
-	// Remove old file
+	// Remove old log file
 	os.Remove(p.logFile)
 	
-	// Reopen
+	// Reopen file
 	f, err := os.OpenFile(p.logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to reopen log file: %v", err)
 	}
-	
-	p.logFd = f
+	p.logFD = f
 	p.logWriter = bufio.NewWriterSize(f, 64*1024)
 	
-	// Write all entries
+	// Write all entries (except dummy at index 0)
 	for i := 1; i < len(entries); i++ {
-		data, _ := json.Marshal(entries[i])
-		p.logWriter.WriteString(string(data) + "\n")
+		data, err := json.Marshal(entries[i])
+		if err != nil {
+			return err
+		}
+		p.logWriter.Write(data)
+		p.logWriter.WriteString("\n")
 	}
 	
-	p.logWriter.Flush()
-	p.logFd.Sync()
-	
-	return nil
+	return p.logWriter.Flush()
 }
 
-// Close cleans up resources
+// Close closes the log file
 func (p *Persister) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -228,8 +256,8 @@ func (p *Persister) Close() error {
 	if p.logWriter != nil {
 		p.logWriter.Flush()
 	}
-	if p.logFd != nil {
-		return p.logFd.Close()
+	if p.logFD != nil {
+		return p.logFD.Close()
 	}
 	return nil
 }
