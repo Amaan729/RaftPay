@@ -13,6 +13,20 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Detect docker compose command
+if command -v docker-compose &> /dev/null; then
+    COMPOSE="docker-compose"
+elif docker compose version &> /dev/null; then
+    COMPOSE="docker compose"
+else
+    echo -e "${RED}❌ Docker Compose not found!${NC}"
+    echo "Please install Docker Desktop or Docker Compose"
+    exit 1
+fi
+
+echo -e "${GREEN}Using: $COMPOSE${NC}"
+echo ""
+
 # Helper function to make API calls
 api_call() {
     local port=$1
@@ -30,7 +44,7 @@ api_call() {
 
 # Step 1: Start the cluster
 echo -e "${BLUE}📦 Step 1: Starting 5-node RaftPay cluster...${NC}"
-docker-compose up -d
+$COMPOSE up -d
 echo ""
 
 # Wait for nodes to start
@@ -92,7 +106,7 @@ echo ""
 echo -e "${YELLOW}💥 Step 7: CHAOS TEST - Killing the leader!${NC}"
 leader_node="node$((LEADER_PORT - 9000 + 1))"
 echo -e "   Stopping ${leader_node}..."
-docker-compose stop $leader_node > /dev/null 2>&1
+$COMPOSE stop $leader_node > /dev/null 2>&1
 echo -e "${RED}   ✗ ${leader_node} is DOWN${NC}"
 echo ""
 
@@ -147,7 +161,7 @@ echo ""
 
 # Step 12: Bring back the dead node
 echo -e "${BLUE}🔄 Step 12: Restarting ${leader_node}...${NC}"
-docker-compose start $leader_node > /dev/null 2>&1
+$COMPOSE start $leader_node > /dev/null 2>&1
 sleep 3
 echo -e "${GREEN}   ✓ ${leader_node} is back online (will sync from new leader)${NC}"
 echo ""
@@ -166,6 +180,6 @@ echo "  ✅ Automatic failover"
 echo "  ✅ Data persistence"
 echo ""
 echo "Cleanup:"
-echo "  docker-compose down       # Stop cluster"
-echo "  docker-compose down -v    # Stop and remove data"
+echo "  $COMPOSE down       # Stop cluster"
+echo "  $COMPOSE down -v    # Stop and remove data"
 echo ""
