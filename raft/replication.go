@@ -25,9 +25,6 @@ func (rn *RaftNode) appendNewEntries(req *AppendEntriesRequest) {
 	// Start inserting at PrevLogIndex + 1
 	insertIndex := req.PrevLogIndex + 1
 	
-	// Track if we had a CONFLICT (not just appending)
-	hadConflict := false
-	
 	for i, entry := range req.Entries {
 		currentIndex := insertIndex + i
 		
@@ -43,30 +40,24 @@ func (rn *RaftNode) appendNewEntries(req *AppendEntriesRequest) {
 			log.Printf("[%s] Conflict at index %d: our term %d vs leader's term %d - truncating",
 				rn.id, currentIndex, rn.log[currentIndex].Term, entry.Term)
 			rn.log = rn.log[:currentIndex]
-			hadConflict = true
+			
+			// Rewrite the entire log file after truncation
+			if err := rn.persister.TruncateLog(rn.log); err != nil {
+				log.Printf("[%s] ❌ Failed to truncate log file: %v", rn.id, err)
+			}
 		}
 		
 		// Append this entry (and set its index)
 		entry.Index = currentIndex
 		rn.log = append(rn.log, entry)
 		
-		// Only persist if NOT in conflict mode (we'll rewrite entire log after conflict)
-		if !hadConflict {
-			if err := rn.persister.AppendLogEntry(entry); err != nil {
-				log.Printf("[%s] ❌ Failed to persist log entry at index %d: %v", rn.id, currentIndex, err)
-			}
+		// Persist the new entry to disk (incremental append)
+		if err := rn.persister.AppendLogEntry(entry); err != nil {
+			log.Printf("[%s] ❌ Failed to persist log entry at index %d: %v", rn.id, currentIndex, err)
 		}
 		
 		log.Printf("[%s] Appended entry at index %d (term %d)",
 			rn.id, currentIndex, entry.Term)
-	}
-	
-	// ONLY truncate persisted log if we had an actual conflict
-	if hadConflict {
-		log.Printf("[%s] 💾 Rewriting log file due to conflict (new length: %d)", rn.id, len(rn.log))
-		if err := rn.persister.TruncateLog(rn.log); err != nil {
-			log.Printf("[%s] ❌ Failed to truncate log file: %v", rn.id, err)
-		}
 	}
 }
 
@@ -95,7 +86,7 @@ func (rn *RaftNode) sendAppendEntriesToPeer(peerID string) {
 	// Get the previous log entry (for consistency check)
 	prevLogIndex := nextIdx - 1
 	prevLogTerm := 0
-	if prevLogIndex > 0 {
+	if prevLogIndex > 0 && prevLogIndex < len(rn.log) {
 		prevLogTerm = rn.log[prevLogIndex].Term
 	}
 	
@@ -121,12 +112,8 @@ func (rn *RaftNode) sendAppendEntriesToPeer(peerID string) {
 		// Use real HTTP transport!
 		resp, err := rn.transport.SendAppendEntries(peerID, req)
 		if err != nil {
-			log.Printf("[%s] ✗ AppendEntries to %s failed: %v", rn.id, peerID, err)
-			return
+			return // Silent failure - will retry on next heartbeat
 		}
-		
-		log.Printf("[%s] ✓ AppendEntries response from %s: success=%v, term=%d",
-			rn.id, peerID, resp.Success, resp.Term)
 		
 		// Handle response
 		rn.mu.Lock()
@@ -156,9 +143,6 @@ func (rn *RaftNode) handleAppendEntriesResponse(peerID string, req *AppendEntrie
 		rn.matchIndex[peerID] = newMatchIndex
 		rn.nextIndex[peerID] = newMatchIndex + 1
 		
-		log.Printf("[%s] ✓ %s acknowledged up to index %d",
-			rn.id, peerID, newMatchIndex)
-		
 		// Check if we can advance commitIndex
 		rn.advanceCommitIndex()
 	} else {
@@ -168,9 +152,6 @@ func (rn *RaftNode) handleAppendEntriesResponse(peerID string, req *AppendEntrie
 		if rn.nextIndex[peerID] < 1 {
 			rn.nextIndex[peerID] = 1
 		}
-		
-		log.Printf("[%s] ✗ %s rejected - decrementing nextIndex to %d",
-			rn.id, peerID, rn.nextIndex[peerID])
 		
 		// Retry immediately
 		rn.sendAppendEntriesToPeer(peerID)
@@ -201,9 +182,6 @@ func (rn *RaftNode) advanceCommitIndex() {
 		
 		// Do we have majority?
 		if replicaCount >= rn.majority {
-			log.Printf("[%s] Entry %d replicated on %d/%d servers - committing!",
-				rn.id, n, replicaCount, len(rn.peers)+1)
-			
 			rn.commitIndex = n
 			
 			// Apply committed entries to state machine!
