@@ -5,22 +5,30 @@ services:
     build: .
     container_name: node1
     hostname: node1
-    command: ["./raftpay", "--id=node1", "--peers=node2,node3,node4,node5", "--raft-port=8000", "--api-port=9000"]
+    command: 
+      - --id=node1
+      - --peers=node2,node3,node4,node5
+      - --raft-port=8000
+      - --api-port=9000
     ports:
-      - "9000:9000"  # Expose REST API to host
+      - "9000:9000"
     networks:
       - raftpay-net
     volumes:
-      - node1-data:/app/data  # Persistent storage
+      - node1-data:/app/data
     restart: unless-stopped
 
   node2:
     build: .
     container_name: node2
     hostname: node2
-    command: ["./raftpay", "--id=node2", "--peers=node1,node3,node4,node5", "--raft-port=8000", "--api-port=9000"]
+    command:
+      - --id=node2
+      - --peers=node1,node3,node4,node5
+      - --raft-port=8000
+      - --api-port=9000
     ports:
-      - "9001:9000"  # Map to different host port
+      - "9001:9000"
     networks:
       - raftpay-net
     volumes:
@@ -31,7 +39,11 @@ services:
     build: .
     container_name: node3
     hostname: node3
-    command: ["./raftpay", "--id=node3", "--peers=node1,node2,node4,node5", "--raft-port=8000", "--api-port=9000"]
+    command:
+      - --id=node3
+      - --peers=node1,node2,node4,node5
+      - --raft-port=8000
+      - --api-port=9000
     ports:
       - "9002:9000"
     networks:
@@ -44,7 +56,11 @@ services:
     build: .
     container_name: node4
     hostname: node4
-    command: ["./raftpay", "--id=node4", "--peers=node1,node2,node3,node5", "--raft-port=8000", "--api-port=9000"]
+    command:
+      - --id=node4
+      - --peers=node1,node2,node3,node5
+      - --raft-port=8000
+      - --api-port=9000
     ports:
       - "9003:9000"
     networks:
@@ -57,7 +73,11 @@ services:
     build: .
     container_name: node5
     hostname: node5
-    command: ["./raftpay", "--id=node5", "--peers=node1,node2,node3,node4", "--raft-port=8000", "--api-port=9000"]
+    command:
+      - --id=node5
+      - --peers=node1,node2,node3,node4
+      - --raft-port=8000
+      - --api-port=9000
     ports:
       - "9004:9000"
     networks:
