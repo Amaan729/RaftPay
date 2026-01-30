@@ -41,61 +41,61 @@ func TestBenchmarkTransfers(t *testing.T) {
 	log.SetOutput(io.Discard)
 	
 	// Node 1
-	node1 := raft.NewRaftNode("node1", []string{"node2", "node3"}, applyCh1)
+	node1 := raft.NewRaftNode("bench_node1", []string{"bench_node2", "bench_node3"}, applyCh1)
 	peerURLs1 := map[string]string{
-		"node2": "http://localhost:8001",
-		"node3": "http://localhost:8002",
+		"bench_node2": "http://localhost:8010",
+		"bench_node3": "http://localhost:8011",
 	}
-	transport1 := raft.NewTransport(node1, "http://localhost:8000", peerURLs1)
+	transport1 := raft.NewTransport(node1, "http://localhost:8009", peerURLs1)
 	node1.SetTransport(transport1)
 	
 	server1 := raft.NewHTTPServer(node1)
-	go server1.StartServer(":8000")
+	go server1.StartServer(":8009")
 	
 	raftLedger1 := ledger.NewRaftLedger(node1, applyCh1)
 	raftLedger1.Start()
 	
-	apiServer1 := api.NewAPIServer(node1, raftLedger1, "node1", ":9000")
+	apiServer1 := api.NewAPIServer(node1, raftLedger1, "bench_node1", ":9009")
 	go apiServer1.StartServer()
 	
 	node1.Start()
 	
 	// Node 2
-	node2 := raft.NewRaftNode("node2", []string{"node1", "node3"}, applyCh2)
+	node2 := raft.NewRaftNode("bench_node2", []string{"bench_node1", "bench_node3"}, applyCh2)
 	peerURLs2 := map[string]string{
-		"node1": "http://localhost:8000",
-		"node3": "http://localhost:8002",
+		"bench_node1": "http://localhost:8009",
+		"bench_node3": "http://localhost:8011",
 	}
-	transport2 := raft.NewTransport(node2, "http://localhost:8001", peerURLs2)
+	transport2 := raft.NewTransport(node2, "http://localhost:8010", peerURLs2)
 	node2.SetTransport(transport2)
 	
 	server2 := raft.NewHTTPServer(node2)
-	go server2.StartServer(":8001")
+	go server2.StartServer(":8010")
 	
 	raftLedger2 := ledger.NewRaftLedger(node2, applyCh2)
 	raftLedger2.Start()
 	
-	apiServer2 := api.NewAPIServer(node2, raftLedger2, "node2", ":9001")
+	apiServer2 := api.NewAPIServer(node2, raftLedger2, "bench_node2", ":9010")
 	go apiServer2.StartServer()
 	
 	node2.Start()
 	
 	// Node 3
-	node3 := raft.NewRaftNode("node3", []string{"node1", "node2"}, applyCh3)
+	node3 := raft.NewRaftNode("bench_node3", []string{"bench_node1", "bench_node2"}, applyCh3)
 	peerURLs3 := map[string]string{
-		"node1": "http://localhost:8000",
-		"node2": "http://localhost:8001",
+		"bench_node1": "http://localhost:8009",
+		"bench_node2": "http://localhost:8010",
 	}
-	transport3 := raft.NewTransport(node3, "http://localhost:8002", peerURLs3)
+	transport3 := raft.NewTransport(node3, "http://localhost:8011", peerURLs3)
 	node3.SetTransport(transport3)
 	
 	server3 := raft.NewHTTPServer(node3)
-	go server3.StartServer(":8002")
+	go server3.StartServer(":8011")
 	
 	raftLedger3 := ledger.NewRaftLedger(node3, applyCh3)
 	raftLedger3.Start()
 	
-	apiServer3 := api.NewAPIServer(node3, raftLedger3, "node3", ":9002")
+	apiServer3 := api.NewAPIServer(node3, raftLedger3, "bench_node3", ":9011")
 	go apiServer3.StartServer()
 	
 	node3.Start()
@@ -121,13 +121,13 @@ func TestBenchmarkTransfers(t *testing.T) {
 		_, isLeader3 := node3.GetState()
 		
 		if isLeader1 {
-			leaderPort = "9000"
+			leaderPort = "9009"
 			break
 		} else if isLeader2 {
-			leaderPort = "9001"
+			leaderPort = "9010"
 			break
 		} else if isLeader3 {
-			leaderPort = "9002"
+			leaderPort = "9011"
 			break
 		}
 	}
@@ -147,8 +147,8 @@ func TestBenchmarkTransfers(t *testing.T) {
 	// Create 100 accounts with $1,000,000 each
 	numAccounts := 100
 	for i := 0; i < numAccounts; i++ {
-		accountID := fmt.Sprintf("account_%d", i)
-		createAccount(baseURL, accountID, 1000000.0)
+		accountID := fmt.Sprintf("bench_account_%d", i)
+		benchCreateAccount(baseURL, accountID, 1000000.0)
 	}
 	
 	// Wait for accounts to be created
@@ -161,9 +161,9 @@ func TestBenchmarkTransfers(t *testing.T) {
 	fmt.Println("📋 Phase 4: Warming up (100 transfers)...")
 	
 	for i := 0; i < 100; i++ {
-		from := fmt.Sprintf("account_%d", i%numAccounts)
-		to := fmt.Sprintf("account_%d", (i+1)%numAccounts)
-		transfer(baseURL, from, to, 1.0, fmt.Sprintf("warmup_%d", i))
+		from := fmt.Sprintf("bench_account_%d", i%numAccounts)
+		to := fmt.Sprintf("bench_account_%d", (i+1)%numAccounts)
+		benchTransfer(baseURL, from, to, 1.0, fmt.Sprintf("warmup_%d", i))
 	}
 	
 	time.Sleep(500 * time.Millisecond)
@@ -205,14 +205,14 @@ func TestBenchmarkTransfers(t *testing.T) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			
-			// Pick random accounts to transfer between
-			from := fmt.Sprintf("account_%d", idx%numAccounts)
-			to := fmt.Sprintf("account_%d", (idx+1)%numAccounts)
+			// Pick accounts to transfer between
+			from := fmt.Sprintf("bench_account_%d", idx%numAccounts)
+			to := fmt.Sprintf("bench_account_%d", (idx+1)%numAccounts)
 			txnID := fmt.Sprintf("bench_txn_%d", idx)
 			
 			// Measure latency of this transfer
 			start := time.Now()
-			err := transferWithError(baseURL, from, to, 0.01, txnID)
+			err := benchTransferWithError(baseURL, from, to, 0.01, txnID)
 			duration := time.Since(start)
 			
 			// Record latency in milliseconds
@@ -306,7 +306,7 @@ func TestBenchmarkTransfers(t *testing.T) {
 	
 	// Visual histogram
 	fmt.Println("📊 LATENCY HISTOGRAM:")
-	printHistogram(latencies)
+	benchPrintHistogram(latencies)
 	fmt.Println()
 	
 	// ========== PHASE 8: PASS/FAIL CRITERIA ==========
@@ -347,8 +347,8 @@ func TestBenchmarkTransfers(t *testing.T) {
 	defer node3.Stop()
 }
 
-// Helper: Create account via API
-func createAccount(baseURL, accountID string, balance float64) error {
+// Helper: Create account via API (renamed to avoid conflict)
+func benchCreateAccount(baseURL, accountID string, balance float64) error {
 	req := api.CreateAccountRequest{
 		AccountID:      accountID,
 		InitialBalance: balance,
@@ -359,13 +359,13 @@ func createAccount(baseURL, accountID string, balance float64) error {
 	return err
 }
 
-// Helper: Submit transfer via API
-func transfer(baseURL, from, to string, amount float64, txnID string) error {
-	return transferWithError(baseURL, from, to, amount, txnID)
+// Helper: Submit transfer via API (renamed to avoid conflict)
+func benchTransfer(baseURL, from, to string, amount float64, txnID string) error {
+	return benchTransferWithError(baseURL, from, to, amount, txnID)
 }
 
-// Helper: Submit transfer and return error
-func transferWithError(baseURL, from, to string, amount float64, txnID string) error {
+// Helper: Submit transfer and return error (renamed to avoid conflict)
+func benchTransferWithError(baseURL, from, to string, amount float64, txnID string) error {
 	req := api.TransferRequest{
 		From:   from,
 		To:     to,
@@ -387,8 +387,8 @@ func transferWithError(baseURL, from, to string, amount float64, txnID string) e
 	return nil
 }
 
-// Helper: Print ASCII histogram of latencies
-func printHistogram(latencies []float64) {
+// Helper: Print ASCII histogram of latencies (renamed to avoid conflict)
+func benchPrintHistogram(latencies []float64) {
 	// Create 10 buckets
 	numBuckets := 10
 	buckets := make([]int, numBuckets)
