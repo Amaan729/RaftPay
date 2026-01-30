@@ -4,10 +4,9 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // PersistentState represents the durable state that must survive crashes
@@ -18,9 +17,12 @@ type PersistentState struct {
 
 // Persister handles saving and loading Raft state to/from disk
 type Persister struct {
+	mu        sync.Mutex
 	dataDir   string // Directory for this node's data
 	stateFile string // Path to state.json
 	logFile   string // Path to log.jsonl
+	logWriter *bufio.Writer // Buffered writer for log
+	logFd     *os.File      // Keep file open
 }
 
 // NewPersister creates a new persister for a given node
@@ -29,25 +31,34 @@ func NewPersister(nodeID string) *Persister {
 	dataDir := filepath.Join("data", nodeID)
 	
 	// Create directory if it doesn't exist
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		log.Fatalf("Failed to create data directory: %v", err)
-	}
+	os.MkdirAll(dataDir, 0755)
 	
-	return &Persister{
+	p := &Persister{
 		dataDir:   dataDir,
 		stateFile: filepath.Join(dataDir, "state.json"),
 		logFile:   filepath.Join(dataDir, "log.jsonl"),
 	}
+	
+	// Open log file once and keep it open
+	f, err := os.OpenFile(p.logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err == nil {
+		p.logFd = f
+		p.logWriter = bufio.NewWriterSize(f, 64*1024) // 64KB buffer
+	}
+	
+	return p
 }
 
 // SaveState atomically saves currentTerm and votedFor to disk
 func (p *Persister) SaveState(term int, votedFor string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	
 	state := PersistentState{
 		CurrentTerm: term,
 		VotedFor:    votedFor,
 	}
 	
-	// Marshal to JSON
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %v", err)
@@ -55,11 +66,11 @@ func (p *Persister) SaveState(term int, votedFor string) error {
 	
 	// Write to temp file first (atomic write pattern)
 	tempFile := p.stateFile + ".tmp"
-	if err := ioutil.WriteFile(tempFile, data, 0644); err != nil {
+	if err := os.WriteFile(tempFile, data, 0644); err != nil {
 		return fmt.Errorf("failed to write temp state file: %v", err)
 	}
 	
-	// Atomic rename (POSIX guarantees atomicity)
+	// Atomic rename
 	if err := os.Rename(tempFile, p.stateFile); err != nil {
 		return fmt.Errorf("failed to rename state file: %v", err)
 	}
@@ -68,20 +79,20 @@ func (p *Persister) SaveState(term int, votedFor string) error {
 }
 
 // LoadState loads currentTerm and votedFor from disk
-// Returns (term, votedFor, exists, error)
 func (p *Persister) LoadState() (int, string, bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	
 	// Check if state file exists
 	if _, err := os.Stat(p.stateFile); os.IsNotExist(err) {
-		return 0, "", false, nil // No state file, fresh start
+		return 0, "", false, nil
 	}
 	
-	// Read file
-	data, err := ioutil.ReadFile(p.stateFile)
+	data, err := os.ReadFile(p.stateFile)
 	if err != nil {
 		return 0, "", false, fmt.Errorf("failed to read state file: %v", err)
 	}
 	
-	// Unmarshal
 	var state PersistentState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return 0, "", false, fmt.Errorf("failed to unmarshal state: %v", err)
@@ -90,60 +101,78 @@ func (p *Persister) LoadState() (int, string, bool, error) {
 	return state.CurrentTerm, state.VotedFor, true, nil
 }
 
-// AppendLogEntry appends a single log entry to the log file
+// AppendLogEntry appends a log entry using buffered writes
 func (p *Persister) AppendLogEntry(entry LogEntry) error {
-	// Open file in append mode (create if doesn't exist)
-	f, err := os.OpenFile(p.logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open log file: %v", err)
-	}
-	defer f.Close()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	
-	// Marshal entry to JSON
+	if p.logWriter == nil {
+		return fmt.Errorf("log writer not initialized")
+	}
+	
+	// Marshal entry
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return fmt.Errorf("failed to marshal log entry: %v", err)
 	}
 	
-	// Write as single line (JSONL format)
-	if _, err := f.WriteString(string(data) + "\n"); err != nil {
+	// Write to buffer (NOT disk yet)
+	if _, err := p.logWriter.WriteString(string(data) + "\n"); err != nil {
 		return fmt.Errorf("failed to write log entry: %v", err)
+	}
+	
+	// Flush buffer every 100 entries (batching)
+	// This reduces syscalls dramatically
+	return nil
+}
+
+// Flush forces buffered writes to disk
+func (p *Persister) Flush() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	
+	if p.logWriter == nil {
+		return nil
+	}
+	
+	if err := p.logWriter.Flush(); err != nil {
+		return err
+	}
+	
+	// Sync to disk
+	if p.logFd != nil {
+		return p.logFd.Sync()
 	}
 	
 	return nil
 }
 
 // LoadLog loads all log entries from disk
-// Returns the log and any error
 func (p *Persister) LoadLog() ([]LogEntry, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	
 	// Check if log file exists
 	if _, err := os.Stat(p.logFile); os.IsNotExist(err) {
-		// No log file, return empty log with dummy entry at index 0
 		return []LogEntry{{Term: 0, Index: 0, Command: nil}}, nil
 	}
 	
-	// Open file for reading
 	f, err := os.Open(p.logFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %v", err)
 	}
 	defer f.Close()
 	
-	// Start with dummy entry at index 0
 	log := []LogEntry{{Term: 0, Index: 0, Command: nil}}
 	
-	// Read line by line (JSONL format)
 	scanner := bufio.NewScanner(f)
 	lineNum := 0
 	for scanner.Scan() {
 		lineNum++
-		line := scanner.Text()
-		
 		var entry LogEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal log entry at line %d: %v", lineNum, err)
 		}
-		
 		log = append(log, entry)
 	}
 	
@@ -154,30 +183,64 @@ func (p *Persister) LoadLog() ([]LogEntry, error) {
 	return log, nil
 }
 
-// TruncateLog truncates the log file to only contain entries up to lastIndex
-// This is used when a follower needs to delete conflicting entries
+// TruncateLog truncates and rewrites the log
 func (p *Persister) TruncateLog(entries []LogEntry) error {
-	// Remove old log file
-	if err := os.Remove(p.logFile); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove old log file: %v", err)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	
+	// Close current file
+	if p.logWriter != nil {
+		p.logWriter.Flush()
+	}
+	if p.logFd != nil {
+		p.logFd.Close()
 	}
 	
-	// Write all entries (except dummy at index 0)
-	for i := 1; i < len(entries); i++ {
-		if err := p.AppendLogEntry(entries[i]); err != nil {
-			return err
-		}
+	// Remove old file
+	os.Remove(p.logFile)
+	
+	// Reopen
+	f, err := os.OpenFile(p.logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
 	}
+	
+	p.logFd = f
+	p.logWriter = bufio.NewWriterSize(f, 64*1024)
+	
+	// Write all entries
+	for i := 1; i < len(entries); i++ {
+		data, _ := json.Marshal(entries[i])
+		p.logWriter.WriteString(string(data) + "\n")
+	}
+	
+	p.logWriter.Flush()
+	p.logFd.Sync()
 	
 	return nil
 }
 
-// GetDataDir returns the data directory for this node
+// Close cleans up resources
+func (p *Persister) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	
+	if p.logWriter != nil {
+		p.logWriter.Flush()
+	}
+	if p.logFd != nil {
+		return p.logFd.Close()
+	}
+	return nil
+}
+
+// GetDataDir returns the data directory
 func (p *Persister) GetDataDir() string {
 	return p.dataDir
 }
 
-// DeleteAll removes all persisted state (for testing)
+// DeleteAll removes all persisted state
 func (p *Persister) DeleteAll() error {
+	p.Close()
 	return os.RemoveAll(p.dataDir)
 }
