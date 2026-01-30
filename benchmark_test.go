@@ -32,15 +32,12 @@ func TestBenchmarkTransfers(t *testing.T) {
 	// ========== PHASE 1: CLUSTER SETUP ==========
 	fmt.Println("📋 Phase 1: Setting up 3-node cluster...")
 	
-	// Setup nodes (same as test_api.go but silent)
 	applyCh1 := make(chan raft.ApplyMsg, 100)
 	applyCh2 := make(chan raft.ApplyMsg, 100)
 	applyCh3 := make(chan raft.ApplyMsg, 100)
 	
-	// Disable verbose Raft logging for benchmark
 	log.SetOutput(io.Discard)
 	
-	// Node 1
 	node1 := raft.NewRaftNode("bench_node1", []string{"bench_node2", "bench_node3"}, applyCh1)
 	peerURLs1 := map[string]string{
 		"bench_node2": "http://localhost:8010",
@@ -60,7 +57,6 @@ func TestBenchmarkTransfers(t *testing.T) {
 	
 	node1.Start()
 	
-	// Node 2
 	node2 := raft.NewRaftNode("bench_node2", []string{"bench_node1", "bench_node3"}, applyCh2)
 	peerURLs2 := map[string]string{
 		"bench_node1": "http://localhost:8009",
@@ -80,7 +76,6 @@ func TestBenchmarkTransfers(t *testing.T) {
 	
 	node2.Start()
 	
-	// Node 3
 	node3 := raft.NewRaftNode("bench_node3", []string{"bench_node1", "bench_node2"}, applyCh3)
 	peerURLs3 := map[string]string{
 		"bench_node1": "http://localhost:8009",
@@ -100,10 +95,8 @@ func TestBenchmarkTransfers(t *testing.T) {
 	
 	node3.Start()
 	
-	// Wait for startup
 	time.Sleep(200 * time.Millisecond)
 	
-	// Re-enable logging for benchmark results
 	log.SetOutput(os.Stderr)
 	
 	fmt.Println("✅ Cluster ready!")
@@ -144,14 +137,12 @@ func TestBenchmarkTransfers(t *testing.T) {
 	// ========== PHASE 3: CREATE TEST ACCOUNTS ==========
 	fmt.Println("📋 Phase 3: Creating test accounts...")
 	
-	// Create 100 accounts with $1,000,000 each
 	numAccounts := 100
 	for i := 0; i < numAccounts; i++ {
 		accountID := fmt.Sprintf("bench_account_%d", i)
 		benchCreateAccount(baseURL, accountID, 1000000.0)
 	}
 	
-	// Wait for accounts to be created
 	time.Sleep(1 * time.Second)
 	
 	fmt.Printf("✅ Created %d accounts\n", numAccounts)
@@ -171,57 +162,45 @@ func TestBenchmarkTransfers(t *testing.T) {
 	fmt.Println()
 	
 	// ========== PHASE 5: BENCHMARK - CONCURRENT TRANSFERS ==========
-	fmt.Println("📋 Phase 5: Running benchmark (5,000 concurrent transfers)...")
+	fmt.Println("📋 Phase 5: Running benchmark (10,000 concurrent transfers)...")
 	fmt.Println()
 	
-	// REDUCED for disk persistence: 5K transfers, concurrency 20
-	numTransfers := 5000
-	concurrency := 20  // Reduced from 100 to 20 for disk persistence
+	numTransfers := 10000  // Back to 10K with buffered writes!
+	concurrency := 50      // 50 parallel (between 20 and 100)
 	
-	// Track latencies for each transfer
 	latencies := make([]float64, numTransfers)
 	var latencyMutex sync.Mutex
 	
-	// Track successes and failures
 	var successCount, failCount int32
 	var countMutex sync.Mutex
 	
-	// Start timer
 	benchmarkStart := time.Now()
 	
-	// Semaphore to limit concurrency
 	sem := make(chan struct{}, concurrency)
 	
-	// WaitGroup to wait for all transfers
 	var wg sync.WaitGroup
 	
-	// Launch all transfers
 	for i := 0; i < numTransfers; i++ {
 		wg.Add(1)
 		
 		go func(idx int) {
 			defer wg.Done()
 			
-			// Acquire semaphore
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			
-			// Pick accounts to transfer between
 			from := fmt.Sprintf("bench_account_%d", idx%numAccounts)
 			to := fmt.Sprintf("bench_account_%d", (idx+1)%numAccounts)
 			txnID := fmt.Sprintf("bench_txn_%d", idx)
 			
-			// Measure latency of this transfer
 			start := time.Now()
 			err := benchTransferWithError(baseURL, from, to, 0.01, txnID)
 			duration := time.Since(start)
 			
-			// Record latency in milliseconds
 			latencyMutex.Lock()
 			latencies[idx] = float64(duration.Microseconds()) / 1000.0
 			latencyMutex.Unlock()
 			
-			// Track success/failure
 			countMutex.Lock()
 			if err == nil {
 				successCount++
@@ -230,8 +209,7 @@ func TestBenchmarkTransfers(t *testing.T) {
 			}
 			countMutex.Unlock()
 			
-			// Print progress every 500 transfers
-			if (idx+1)%500 == 0 {
+			if (idx+1)%1000 == 0 {
 				elapsed := time.Since(benchmarkStart).Seconds()
 				currentThroughput := float64(idx+1) / elapsed
 				fmt.Printf("  Progress: %d/%d transfers (%.0f TPS)\n", idx+1, numTransfers, currentThroughput)
@@ -239,10 +217,8 @@ func TestBenchmarkTransfers(t *testing.T) {
 		}(i)
 	}
 	
-	// Wait for all transfers to complete
 	wg.Wait()
 	
-	// Stop timer
 	benchmarkDuration := time.Since(benchmarkStart)
 	
 	fmt.Println()
@@ -253,15 +229,12 @@ func TestBenchmarkTransfers(t *testing.T) {
 	fmt.Println("📋 Phase 6: Calculating statistics...")
 	fmt.Println()
 	
-	// Sort latencies to calculate percentiles
 	sort.Float64s(latencies)
 	
-	// Calculate percentiles
 	p50 := latencies[len(latencies)*50/100]
 	p95 := latencies[len(latencies)*95/100]
 	p99 := latencies[len(latencies)*99/100]
 	
-	// Calculate min/max/avg
 	minLatency := latencies[0]
 	maxLatency := latencies[len(latencies)-1]
 	
@@ -271,14 +244,12 @@ func TestBenchmarkTransfers(t *testing.T) {
 	}
 	avgLatency := sumLatency / float64(len(latencies))
 	
-	// Calculate standard deviation
 	var variance float64
 	for _, lat := range latencies {
 		variance += math.Pow(lat-avgLatency, 2)
 	}
 	stdDev := math.Sqrt(variance / float64(len(latencies)))
 	
-	// Calculate throughput
 	throughput := float64(successCount) / benchmarkDuration.Seconds()
 	
 	// ========== PHASE 7: PRINT RESULTS ==========
@@ -305,7 +276,6 @@ func TestBenchmarkTransfers(t *testing.T) {
 	fmt.Printf("  Std Dev:      %.2f ms\n", stdDev)
 	fmt.Println()
 	
-	// Visual histogram
 	fmt.Println("📊 LATENCY HISTOGRAM:")
 	benchPrintHistogram(latencies)
 	fmt.Println()
@@ -316,18 +286,18 @@ func TestBenchmarkTransfers(t *testing.T) {
 	fmt.Println(strings.Repeat("=", 80))
 	fmt.Println()
 	
-	// Goal 1: Throughput > 500 TPS (adjusted for disk persistence)
-	if throughput >= 500 {
-		fmt.Printf("  ✅ Throughput: %.0f TPS (goal: 500+ TPS)\n", throughput)
+	// Goal 1: Throughput > 1000 TPS (back to original goal!)
+	if throughput >= 1000 {
+		fmt.Printf("  ✅ Throughput: %.0f TPS (goal: 1000+ TPS)\n", throughput)
 	} else {
-		fmt.Printf("  ❌ Throughput: %.0f TPS (goal: 500+ TPS)\n", throughput)
+		fmt.Printf("  ❌ Throughput: %.0f TPS (goal: 1000+ TPS)\n", throughput)
 	}
 	
-	// Goal 2: p99 latency < 100ms (adjusted for disk persistence)
-	if p99 < 100 {
-		fmt.Printf("  ✅ p99 Latency: %.2f ms (goal: <100ms)\n", p99)
+	// Goal 2: p99 latency < 50ms (back to original goal!)
+	if p99 < 50 {
+		fmt.Printf("  ✅ p99 Latency: %.2f ms (goal: <50ms)\n", p99)
 	} else {
-		fmt.Printf("  ❌ p99 Latency: %.2f ms (goal: <100ms)\n", p99)
+		fmt.Printf("  ❌ p99 Latency: %.2f ms (goal: <50ms)\n", p99)
 	}
 	
 	// Goal 3: Success rate > 99%
@@ -342,13 +312,11 @@ func TestBenchmarkTransfers(t *testing.T) {
 	fmt.Println(strings.Repeat("=", 80))
 	fmt.Println()
 	
-	// Cleanup
 	defer node1.Stop()
 	defer node2.Stop()
 	defer node3.Stop()
 }
 
-// Helper: Create account via API (renamed to avoid conflict)
 func benchCreateAccount(baseURL, accountID string, balance float64) error {
 	req := api.CreateAccountRequest{
 		AccountID:      accountID,
@@ -360,12 +328,10 @@ func benchCreateAccount(baseURL, accountID string, balance float64) error {
 	return err
 }
 
-// Helper: Submit transfer via API (renamed to avoid conflict)
 func benchTransfer(baseURL, from, to string, amount float64, txnID string) error {
 	return benchTransferWithError(baseURL, from, to, amount, txnID)
 }
 
-// Helper: Submit transfer and return error (renamed to avoid conflict)
 func benchTransferWithError(baseURL, from, to string, amount float64, txnID string) error {
 	req := api.TransferRequest{
 		From:   from,
@@ -388,9 +354,7 @@ func benchTransferWithError(baseURL, from, to string, amount float64, txnID stri
 	return nil
 }
 
-// Helper: Print ASCII histogram of latencies (renamed to avoid conflict)
 func benchPrintHistogram(latencies []float64) {
-	// Create 10 buckets
 	numBuckets := 10
 	buckets := make([]int, numBuckets)
 	
@@ -398,7 +362,6 @@ func benchPrintHistogram(latencies []float64) {
 	maxLat := latencies[len(latencies)-1]
 	bucketSize := (maxLat - minLat) / float64(numBuckets)
 	
-	// Fill buckets
 	for _, lat := range latencies {
 		bucketIdx := int((lat - minLat) / bucketSize)
 		if bucketIdx >= numBuckets {
@@ -407,7 +370,6 @@ func benchPrintHistogram(latencies []float64) {
 		buckets[bucketIdx]++
 	}
 	
-	// Find max bucket for scaling
 	maxCount := 0
 	for _, count := range buckets {
 		if count > maxCount {
@@ -415,7 +377,6 @@ func benchPrintHistogram(latencies []float64) {
 		}
 	}
 	
-	// Print histogram
 	barWidth := 50
 	for i, count := range buckets {
 		rangeStart := minLat + float64(i)*bucketSize
