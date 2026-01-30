@@ -16,6 +16,6 @@ func DefaultConfig() *Config {
         ElectionTimeoutMin: 150 * time.Millisecond,
         ElectionTimeoutMax: 300 * time.Millisecond,
         HeartbeatInterval:  50 * time.Millisecond,
-        RPCTimeout:         100 * time.Millisecond,
+        RPCTimeout:         2000 * time.Millisecond,  // Increased for disk persistence!
     }
 }
