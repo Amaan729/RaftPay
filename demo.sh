@@ -47,26 +47,40 @@ echo -e "${BLUE}📦 Step 1: Starting 5-node RaftPay cluster...${NC}"
 $COMPOSE up -d
 echo ""
 
-# Wait for nodes to start
-echo -e "${BLUE}⏳ Waiting for nodes to initialize...${NC}"
-sleep 8
+# Wait for nodes to start (increased time)
+echo -e "${BLUE}⏳ Waiting for nodes to initialize (15 seconds)...${NC}"
+sleep 15
 echo ""
 
-# Step 2: Find the leader
+# Step 2: Find the leader (try multiple times)
 echo -e "${BLUE}👑 Step 2: Finding the leader...${NC}"
 LEADER_PORT=""
-for port in 9000 9001 9002 9003 9004; do
-    status=$(api_call $port "/status" | grep -o '"isLeader":[^,}]*' | cut -d':' -f2)
-    if [ "$status" = "true" ]; then
-        LEADER_PORT=$port
-        node_num=$((port - 9000 + 1))
-        echo -e "${GREEN}✅ Leader found: node${node_num} (port ${port})${NC}"
-        break
+attempts=0
+max_attempts=5
+
+while [ -z "$LEADER_PORT" ] && [ $attempts -lt $max_attempts ]; do
+    for port in 9000 9001 9002 9003 9004; do
+        status=$(api_call $port "/status" 2>/dev/null | grep -o '"isLeader":[^,}]*' | cut -d':' -f2 || echo "false")
+        if [ "$status" = "true" ]; then
+            LEADER_PORT=$port
+            node_num=$((port - 9000 + 1))
+            echo -e "${GREEN}✅ Leader found: node${node_num} (port ${port})${NC}"
+            break 2
+        fi
+    done
+    
+    attempts=$((attempts + 1))
+    if [ -z "$LEADER_PORT" ]; then
+        echo -e "${YELLOW}   Attempt $attempts/$max_attempts - still electing...${NC}"
+        sleep 3
     fi
 done
 
 if [ -z "$LEADER_PORT" ]; then
-    echo -e "${RED}❌ No leader found! Cluster may still be electing...${NC}"
+    echo -e "${RED}❌ No leader found after $max_attempts attempts!${NC}"
+    echo ""
+    echo "Checking node logs for errors:"
+    $COMPOSE logs --tail=20 node1
     exit 1
 fi
 echo ""
@@ -111,8 +125,8 @@ echo -e "${RED}   ✗ ${leader_node} is DOWN${NC}"
 echo ""
 
 # Wait for leader election
-echo -e "${BLUE}⏳ Waiting for leader election...${NC}"
-sleep 5
+echo -e "${BLUE}⏳ Waiting for leader election (8 seconds)...${NC}"
+sleep 8
 echo ""
 
 # Find new leader
