@@ -286,20 +286,37 @@ The demo script includes automated chaos testing:
 ### **Project Structure**
 ```
 RaftPay/
-├── raft/              # Raft consensus implementation
-│   ├── node.go        # Core node logic
-│   ├── election.go    # Leader election
-│   ├── replication.go # Log replication
-│   ├── persistence.go # Persistent storage
-│   └── transport.go   # Network layer
-├── ledger/            # Financial ledger
-│   └── ledger.go      # Account management
-├── api/               # REST API server
-│   └── api.go         # HTTP endpoints
-├── main.go            # Entry point
-├── Dockerfile         # Container image
-├── docker-compose.yml # Multi-node deployment
-└── demo.sh           # Automated demo
+├── main.go              # Application entry point
+├── go.mod               # Go module dependencies
+├── benchmark_test.go    # Performance benchmarks
+├── demo.sh              # Automated demo script
+├── README.md            # Project documentation
+├── ARCHITECTURE.md      # Detailed technical documentation
+├── Dockerfile           # Container image definition
+├── docker-compose.yml   # Multi-node cluster orchestration
+├── .dockerignore        # Docker build exclusions
+│
+├── raft/                # Raft consensus implementation
+│   ├── node.go          # Core node state and logic
+│   ├── election.go      # Leader election algorithm
+│   ├── replication.go   # Log replication mechanism
+│   ├── rpc.go           # RPC message definitions
+│   ├── http_server.go   # HTTP transport layer
+│   ├── persistence.go   # Persistent storage (WAL)
+│   ├── config.go        # Configuration management
+│   ├── utils.go         # Utility functions
+│   ├── state_machine.go # State machine interface
+│   ├── transport.go     # Network transport abstraction
+│   ├── proposal.go      # Client proposal handling
+│   └── types.go         # Type definitions
+│
+├── ledger/              # Financial ledger layer
+│   ├── ledger.go        # Core ledger logic
+│   └── raft_ledger.go   # Raft-integrated ledger
+│
+└── api/                 # REST API layer
+    ├── handlers.go      # HTTP request handlers
+    └── types.go         # API type definitions
 ```
 
 ### **Build from Source**
