@@ -13,9 +13,9 @@ type Config struct {
 // DefaultConfig returns recommended Raft configuration
 func DefaultConfig() *Config {
     return &Config{
-        ElectionTimeoutMin: 500 * time.Millisecond,  // Increased for stability under load
-        ElectionTimeoutMax: 1000 * time.Millisecond, // Increased for stability under load
-        HeartbeatInterval:  100 * time.Millisecond,  // More frequent heartbeats
-        RPCTimeout:         1000 * time.Millisecond,
+        ElectionTimeoutMin: 300 * time.Millisecond,  // Balanced for performance
+        ElectionTimeoutMax: 600 * time.Millisecond,  // Balanced for performance
+        HeartbeatInterval:  75 * time.Millisecond,   // Fast heartbeats
+        RPCTimeout:         500 * time.Millisecond,  // Fast RPCs
     }
 }
