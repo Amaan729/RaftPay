@@ -1,0 +1,23 @@
+# Ignore test files
+*_test.go
+benchmark_test.go
+
+# Ignore data directories
+data/
+*.log
+
+# Ignore Git
+.git/
+.gitignore
+
+# Ignore documentation
+README.md
+*.md
+
+# Ignore demo scripts
+demo.sh
+
+# Ignore Docker files
+Dockerfile
+docker-compose.yml
+.dockerignore
