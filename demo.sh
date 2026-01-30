@@ -47,12 +47,12 @@ echo -e "${BLUE}📦 Step 1: Starting 5-node RaftPay cluster...${NC}"
 $COMPOSE up -d
 echo ""
 
-# Wait for nodes to start (increased time)
+# Wait for nodes to start
 echo -e "${BLUE}⏳ Waiting for nodes to initialize (15 seconds)...${NC}"
 sleep 15
 echo ""
 
-# Step 2: Find the leader (try multiple times)
+# Step 2: Find the leader
 echo -e "${BLUE}👑 Step 2: Finding the leader...${NC}"
 LEADER_PORT=""
 attempts=0
@@ -60,8 +60,9 @@ max_attempts=5
 
 while [ -z "$LEADER_PORT" ] && [ $attempts -lt $max_attempts ]; do
     for port in 9000 9001 9002 9003 9004; do
-        status=$(api_call $port "/status" 2>/dev/null | grep -o '"isLeader":[^,}]*' | cut -d':' -f2 || echo "false")
-        if [ "$status" = "true" ]; then
+        # Check if state is "LEADER" (not isLeader)
+        status=$(api_call $port "/status" 2>/dev/null | grep -o '"state":"[^"]*"' | cut -d'"' -f4 || echo "FOLLOWER")
+        if [ "$status" = "LEADER" ]; then
             LEADER_PORT=$port
             node_num=$((port - 9000 + 1))
             echo -e "${GREEN}✅ Leader found: node${node_num} (port ${port})${NC}"
@@ -91,7 +92,7 @@ api_call $LEADER_PORT "/account" '{"account_id":"alice","initial_balance":1000.0
 echo -e "${GREEN}   ✓ Created alice with \$1000${NC}"
 api_call $LEADER_PORT "/account" '{"account_id":"bob","initial_balance":500.00}' > /dev/null
 echo -e "${GREEN}   ✓ Created bob with \$500${NC}"
-sleep 1
+sleep 2
 echo ""
 
 # Step 4: Check balances
@@ -105,7 +106,7 @@ echo ""
 # Step 5: Make a transfer
 echo -e "${BLUE}💸 Step 5: Making a transfer (Alice → Bob: \$100)...${NC}"
 api_call $LEADER_PORT "/transfer" '{"from":"alice","to":"bob","amount":100.00,"txn_id":"demo_txn_1"}' > /dev/null
-sleep 1
+sleep 2
 echo ""
 
 # Step 6: Verify updated balances
@@ -136,8 +137,8 @@ for port in 9000 9001 9002 9003 9004; do
     if [ "$port" = "$LEADER_PORT" ]; then
         continue  # Skip the dead node
     fi
-    status=$(api_call $port "/status" 2>/dev/null | grep -o '"isLeader":[^,}]*' | cut -d':' -f2 || echo "false")
-    if [ "$status" = "true" ]; then
+    status=$(api_call $port "/status" 2>/dev/null | grep -o '"state":"[^"]*"' | cut -d'"' -f4 || echo "FOLLOWER")
+    if [ "$status" = "LEADER" ]; then
         NEW_LEADER_PORT=$port
         node_num=$((port - 9000 + 1))
         echo -e "${GREEN}✅ New leader elected: node${node_num} (port ${port})${NC}"
@@ -162,7 +163,7 @@ echo ""
 # Step 10: Make another transfer with new leader
 echo -e "${BLUE}💸 Step 10: Making transfer with new leader (Bob → Alice: \$50)...${NC}"
 api_call $NEW_LEADER_PORT "/transfer" '{"from":"bob","to":"alice","amount":50.00,"txn_id":"demo_txn_2"}' > /dev/null
-sleep 1
+sleep 2
 echo ""
 
 # Verify final balances
